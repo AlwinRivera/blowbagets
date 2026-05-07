@@ -33,7 +33,7 @@ $checklistItems = [
             ['name' => 'oil_level', 'label' => 'Oil Level', 'type' => 'select', 'options' => ['Full', 'Normal', 'Low', 'Very Low']],
             ['name' => 'oil_color', 'label' => 'Oil Color', 'type' => 'select', 'options' => ['Amber (Good)', 'Dark Brown (Okay)', 'Black (Change Needed)', 'Milky (Leak Suspected)']],
             ['name' => 'oil_leaks', 'label' => 'Oil Leaks', 'type' => 'select', 'options' => ['No Leaks', 'Minor Leak', 'Major Leak']],
-            ['name' => 'last_oil_change', 'label' => 'Last Oil Change (km ago)', 'type' => 'number'],
+            ['name' => 'last_oil_change', 'label' => 'Last Oil Change Date', 'type' => 'date'],
         ]
     ],
     'water' => [
@@ -132,6 +132,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_checklist'])) 
     if (isset($formData['oil_color']) && $formData['oil_color'] === 'Black (Change Needed)') {
         $warnings[] = ['section' => 'Oil', 'msg' => 'Oil needs to be changed immediately.'];
         $overallStatus = 'danger';
+    }
+    // Date-based last oil change warning
+    $oilDate = trim($formData['last_oil_change'] ?? '');
+    if ($oilDate) {
+        try {
+            $days = (int)(new DateTime('today'))->diff(new DateTime($oilDate))->days;
+            if ($days > 180) {
+                $warnings[] = ['section' => 'Oil', 'msg' => "Last oil change was $days days ago (" . date('M d, Y', strtotime($oilDate)) . "). Overdue — change oil as soon as possible."];
+                if ($overallStatus === 'good') $overallStatus = 'warning';
+            } elseif ($days > 90) {
+                $warnings[] = ['section' => 'Oil', 'msg' => "Last oil change was $days days ago (" . date('M d, Y', strtotime($oilDate)) . "). Consider changing soon."];
+                if ($overallStatus === 'good') $overallStatus = 'warning';
+            }
+        } catch (Exception $e) {}
     }
     if (isset($formData['brake_feel']) && in_array($formData['brake_feel'], ['Spongy', 'Grinding'])) {
         $warnings[] = ['section' => 'Brakes', 'msg' => 'Brakes need immediate attention. Do not drive until checked.'];
@@ -620,6 +634,25 @@ foreach ($checklistItems as $key => $item): ?>
             <option value="<?= $opt ?>" <?= (($formData[$field['name']] ?? '') === $opt) ? 'selected' : '' ?>><?= $opt ?></option>
           <?php endforeach; ?>
         </select>
+      <?php elseif ($field['type'] === 'date'): ?>
+        <input
+          type="date"
+          name="<?= $field['name'] ?>"
+          id="field_<?= $field['name'] ?>"
+          max="<?= date('Y-m-d') ?>"
+          value="<?= htmlspecialchars($formData[$field['name']] ?? '') ?>"
+          onchange="updateDaysAgo('<?= $field['name'] ?>')"
+        >
+        <div id="daysago_<?= $field['name'] ?>" style="font-size:12px;font-weight:700;min-height:18px;margin-top:4px;">
+          <?php
+            $savedDate = $formData[$field['name']] ?? '';
+            if ($savedDate) {
+              $days = (int)(new DateTime('today'))->diff(new DateTime($savedDate))->days;
+              $c = $days <= 90 ? '#2e7d32' : ($days <= 180 ? '#8a5c00' : '#c62828');
+              echo "<span style='color:$c'>📅 $days day" . ($days !== 1 ? 's' : '') . " ago</span>";
+            }
+          ?>
+        </div>
       <?php else: ?>
         <input type="number" name="<?= $field['name'] ?>" min="0" placeholder="0" value="<?= htmlspecialchars($formData[$field['name']] ?? '') ?>">
       <?php endif; ?>
@@ -642,5 +675,31 @@ foreach ($checklistItems as $key => $item): ?>
   <strong>BLOWBAGETS</strong> — Pre-Drive Vehicle Safety Checklist &nbsp;|&nbsp; Built with PHP
 </footer>
 
+<script>
+function updateDaysAgo(fieldName) {
+  const input  = document.getElementById('field_' + fieldName);
+  const output = document.getElementById('daysago_' + fieldName);
+  if (!input || !output || !input.value) { output.innerHTML = ''; return; }
+
+  const today    = new Date(); today.setHours(0,0,0,0);
+  const selected = new Date(input.value + 'T00:00:00');
+  const diffMs   = today - selected;
+
+  if (diffMs < 0) {
+    output.innerHTML = '<span style="color:#c62828">⚠️ Date cannot be in the future</span>';
+    return;
+  }
+
+  const days  = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const color = days <= 90 ? '#2e7d32' : days <= 180 ? '#8a5c00' : '#c62828';
+  const note  = days <= 90
+    ? '✅ Recent — oil is likely fine'
+    : days <= 180
+    ? '⚠️ Getting old — consider changing soon'
+    : '🔴 Overdue — change oil as soon as possible';
+
+  output.innerHTML = `<span style="color:${color}">📅 ${days} day${days !== 1 ? 's' : ''} ago &nbsp;·&nbsp; ${note}</span>`;
+}
+</script>
 </body>
 </html>
