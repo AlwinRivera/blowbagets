@@ -183,6 +183,91 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_checklist'])) 
         'vehicle' => htmlspecialchars($formData['vehicle_name'] ?? 'My Vehicle'),
         'plate' => htmlspecialchars($formData['plate_number'] ?? 'N/A'),
     ];
+
+    // ── BUILD REPORT TEXT (for Email & WhatsApp) ──────────────────────────
+    $statusEmoji = $overallStatus === 'good' ? '✅ ALL CLEAR' : ($overallStatus === 'danger' ? '🚨 DANGER' : '⚠️ CAUTION');
+    $driverName  = trim($formData['driver_name'] ?? '');
+
+    $emailSubject = "BLOWBAGETS Report – {$result['vehicle']} ({$result['plate']}) – {$result['date']}";
+
+    $emailBody  = "BLOWBAGETS PRE-DRIVE SAFETY CHECK REPORT\n";
+    $emailBody .= str_repeat("=", 45) . "\n";
+    $emailBody .= "Status   : $statusEmoji\n";
+    $emailBody .= "Vehicle  : {$result['vehicle']}\n";
+    $emailBody .= "Plate    : {$result['plate']}\n";
+    $emailBody .= "Driver   : " . ($driverName ?: '—') . "\n";
+    $emailBody .= "Odometer : " . (trim($formData['odometer'] ?? '') ? number_format($formData['odometer']) . ' km' : '—') . "\n";
+    $emailBody .= "Date     : {$result['date']}\n";
+    $emailBody .= str_repeat("=", 45) . "\n\n";
+
+    // Per-section summary
+    $sections = [
+        'B - BATTERY' => ['battery_charge','battery_terminals','battery_age'],
+        'L - LIGHTS'  => ['headlights','turn_signals','brake_lights','tail_lights'],
+        'O - OIL'     => ['oil_level','oil_color','oil_leaks','last_oil_change'],
+        'W - WATER'   => ['coolant_level','coolant_color','radiator_leaks'],
+        'B - BRAKES'  => ['brake_feel','brake_noise','brake_pads'],
+        'A - AIR'     => ['fl_psi','fr_psi','rl_psi','rr_psi','spare_psi'],
+        'G - GAS'     => ['fuel_level','fuel_type'],
+        'E - ENGINE'  => ['engine_noise','check_engine_light','engine_smoke','engine_temp'],
+        'T - TIRES'   => ['tire_tread','tire_damage','wheel_alignment'],
+        'S - SELF'    => ['physical_condition','emotional_state','drivers_license','registration'],
+    ];
+    foreach ($sections as $heading => $fields) {
+        $emailBody .= "[ $heading ]\n";
+        foreach ($fields as $f) {
+            $val = trim($formData[$f] ?? '—');
+            if ($f === 'last_oil_change' && $val && $val !== '—') {
+                try {
+                    $d = (int)(new DateTime('today'))->diff(new DateTime($val))->days;
+                    $val = date('M d, Y', strtotime($val)) . " ($d days ago)";
+                } catch(Exception $e){}
+            }
+            $label = ucwords(str_replace('_', ' ', $f));
+            $emailBody .= "  $label: $val\n";
+        }
+        $emailBody .= "\n";
+    }
+
+    // Issues
+    if (!empty($warnings)) {
+        $emailBody .= "ISSUES FOUND (" . count($warnings) . ")\n";
+        $emailBody .= str_repeat("-", 35) . "\n";
+        foreach ($warnings as $w) {
+            $emailBody .= "  [{$w['section']}] {$w['msg']}\n";
+        }
+    } else {
+        $emailBody .= "No issues found. Vehicle is road-ready.\n";
+    }
+    $emailBody .= "\n" . str_repeat("=", 45) . "\n";
+    $emailBody .= "Sent via BLOWBAGETS Safety Check System\n";
+
+    // WhatsApp short version
+    $waText  = "*BLOWBAGETS SAFETY CHECK*\n";
+    $waText .= "$statusEmoji\n\n";
+    $waText .= "🚗 *Vehicle:* {$result['vehicle']}\n";
+    $waText .= "🔢 *Plate:* {$result['plate']}\n";
+    $waText .= "👤 *Driver:* " . ($driverName ?: '—') . "\n";
+    $waText .= "📅 *Date:* {$result['date']}\n\n";
+    if (!empty($warnings)) {
+        $waText .= "*⚠️ Issues Found (" . count($warnings) . "):*\n";
+        foreach ($warnings as $w) {
+            $waText .= "• [{$w['section']}] {$w['msg']}\n";
+        }
+    } else {
+        $waText .= "✅ No issues. Vehicle is road-ready!\n";
+    }
+    $waText .= "\n_Sent via BLOWBAGETS_";
+
+    // Build URLs — SET YOUR OFFICE EMAIL & WHATSAPP NUMBER BELOW
+    $adminEmail   = 'admin@youroffice.com';        // ← change this
+    $adminWA      = '639XXXXXXXXX';                // ← change this (no + sign, e.g. 639171234567)
+
+    $mailtoUrl = 'mailto:' . $adminEmail
+        . '?subject=' . rawurlencode($emailSubject)
+        . '&body='    . rawurlencode($emailBody);
+
+    $waUrl = 'https://wa.me/' . $adminWA . '?text=' . rawurlencode($waText);
 }
 
 $statusLabels = [
@@ -340,10 +425,11 @@ $statusLabels = [
   }
   .form-row {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
     gap: 16px;
   }
-  @media(max-width:600px){ .form-row { grid-template-columns: 1fr; } }
+  @media(max-width:700px){ .form-row { grid-template-columns: 1fr 1fr; } }
+  @media(max-width:480px){ .form-row { grid-template-columns: 1fr; } }
   .form-group label {
     display: block;
     font-size: 12px;
@@ -505,6 +591,51 @@ $statusLabels = [
   }
   .btn-submit:active { transform: translateY(0); }
 
+  /* SEND BOX */
+  .send-box {
+    margin-top: 24px;
+    background: #f8fafc;
+    border: 2px solid var(--light-gray);
+    border-radius: 12px;
+    padding: 20px 22px;
+  }
+  .send-title {
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--navy);
+    margin-bottom: 14px;
+    text-align: center;
+    letter-spacing: .3px;
+  }
+  .send-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+  }
+  @media(max-width: 600px) {
+    .send-buttons { grid-template-columns: 1fr; }
+  }
+  .send-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    text-decoration: none;
+    transition: transform .15s, box-shadow .15s;
+    color: #fff;
+  }
+  .send-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0,0,0,.15);
+  }
+  .send-btn strong { display: block; font-size: 14px; }
+  .send-btn small  { display: block; font-size: 11px; opacity: .85; margin-top: 2px; }
+  .send-icon { font-size: 28px; line-height: 1; flex-shrink: 0; }
+  .send-email    { background: linear-gradient(135deg, #1a2744, #243058); }
+  .send-whatsapp { background: linear-gradient(135deg, #25D366, #128C7E); }
+  .send-print    { background: linear-gradient(135deg, #607080, #455a64); }
+
   /* FOOTER */
   footer {
     background: var(--navy);
@@ -560,7 +691,9 @@ $statusLabels = [
   <div class="result-header <?= $statusLabels[$result['status']]['class'] ?>">
     <h2><?= $statusLabels[$result['status']]['label'] ?></h2>
     <div class="result-meta">
-      <?= $result['vehicle'] ?> &nbsp;|&nbsp; Plate: <?= $result['plate'] ?> &nbsp;|&nbsp; <?= $result['date'] ?>
+      <?= $result['vehicle'] ?> &nbsp;|&nbsp; Plate: <?= $result['plate'] ?>
+      <?php if (!empty($formData['driver_name'])): ?> &nbsp;|&nbsp; Driver: <?= htmlspecialchars($formData['driver_name']) ?><?php endif; ?>
+      &nbsp;|&nbsp; <?= $result['date'] ?>
     </div>
   </div>
   <div class="result-body">
@@ -574,16 +707,43 @@ $statusLabels = [
           $cls = $isDanger ? '' : 'warning';
         ?>
         <li class="<?= $cls ?>">
-          <span>🔴</span>
+          <span><?= $isDanger ? '🔴' : '🟡' ?></span>
           <span><strong><?= $w['section'] ?>:</strong> <?= $w['msg'] ?></span>
         </li>
         <?php endforeach; ?>
       </ul>
     <?php endif; ?>
-    <div style="margin-top:20px;text-align:center;">
-      <a href="index.php" style="color:var(--green);font-weight:700;font-size:15px;text-decoration:none;">↩ Run Another Check</a>
-      &nbsp;&nbsp;
-      <a href="javascript:window.print()" style="color:var(--gray);font-weight:600;font-size:14px;text-decoration:none;">🖨️ Print Report</a>
+
+    <!-- SEND TO OFFICE BUTTONS -->
+    <div class="send-box">
+      <p class="send-title">📤 Send Report to Office / Admin</p>
+      <div class="send-buttons">
+        <a href="<?= htmlspecialchars($mailtoUrl) ?>" class="send-btn send-email" target="_blank">
+          <span class="send-icon">📧</span>
+          <span>
+            <strong>Send via Email</strong>
+            <small>Opens your mail app</small>
+          </span>
+        </a>
+        <a href="<?= htmlspecialchars($waUrl) ?>" class="send-btn send-whatsapp" target="_blank">
+          <span class="send-icon">💬</span>
+          <span>
+            <strong>Send via WhatsApp</strong>
+            <small>Opens WhatsApp chat</small>
+          </span>
+        </a>
+        <a href="javascript:window.print()" class="send-btn send-print">
+          <span class="send-icon">🖨️</span>
+          <span>
+            <strong>Print / Save PDF</strong>
+            <small>For physical records</small>
+          </span>
+        </a>
+      </div>
+    </div>
+
+    <div style="margin-top:16px;text-align:center;">
+      <a href="index.php" style="color:var(--green);font-weight:700;font-size:14px;text-decoration:none;">↩ Run Another Check</a>
     </div>
   </div>
 </div>
@@ -595,6 +755,10 @@ $statusLabels = [
 <div class="vehicle-info-card">
   <h2>🚗 Vehicle Information</h2>
   <div class="form-row">
+    <div class="form-group">
+      <label>Driver Name</label>
+      <input type="text" name="driver_name" placeholder="e.g. Juan dela Cruz" value="<?= htmlspecialchars($formData['driver_name'] ?? '') ?>">
+    </div>
     <div class="form-group">
       <label>Vehicle Name / Model</label>
       <input type="text" name="vehicle_name" placeholder="e.g. Toyota Vios 2022" value="<?= htmlspecialchars($formData['vehicle_name'] ?? '') ?>">
